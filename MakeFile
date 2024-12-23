@@ -1,0 +1,19 @@
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -c99
+TARGET = voice_modulator
+
+SRCS = main.c voice_modulator.c
+OBJS = $(SRCS:.c=.o)
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -f $(TARGET) $(OBJS)
+
+.PHONY: all clean
