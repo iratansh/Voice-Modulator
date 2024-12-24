@@ -11,10 +11,9 @@ typedef struct {
     float speed_factor;      // Speed adjustment
     float echo_intensity;    // Intensity of the echo effect (0.0 - 1.0)
     float reverb_intensity;  // Intensity of the reverb effect (0.0 - 1.0)
-    size_t echo_delay;       // Echo delay 
-    size_t sample_rate;      // Audio sample rate 
+    const size_t echo_delay;       // Echo delay 
+    const size_t sample_rate;      // Audio sample rate 
 } ModulationParams;
-
 
 int init_audio_pipeline(ModulationParams* params);
 int process_audio(const float* input, float* output, size_t sample_count, ModulationParams* params);

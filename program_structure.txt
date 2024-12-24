@@ -1,0 +1,14 @@
+3 Threads
+
+1 - Continuous Input (PortAudio)
+2 - Continuous Algorithm processing (phase_vocoder, etc.)
+3 - Continuous Output (Modulated Voice)
+
+GUI
+
+- Simple Design (No login system, etc.)
+- Header (App Title)
+- Knobs to change the parameters, (echo, pitch, etc.)
+- Reset button 
+- Exit button
+- Remove window resizing button

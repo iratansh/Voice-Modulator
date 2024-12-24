@@ -9,6 +9,8 @@ typedef struct {
     double value;        // Current value of the knob
     double angle;        // Current angle of the knob
     gboolean is_dragging; // Is the knob being dragged?
+    double x;            // X coordinate of the knob center
+    double y;            // Y coordinate of the knob center
 } KnobData;
 
 static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data);
