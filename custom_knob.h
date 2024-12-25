@@ -18,3 +18,4 @@ static gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpoint
 static gboolean on_button_release(GtkWidget *widget, GdkEventButton *event, gpointer user_data);
 static gboolean on_motion_notify(GtkWidget *widget, GdkEventMotion *event, gpointer user_data);
 static void activate(GtkApplication *app, gpointer user_data);
+void update_knob(int knob_index, double x, double y, double angle);

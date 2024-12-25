@@ -1,16 +1,41 @@
 #include "gui.h"
 #include "voice_modulator.h"
-#include "custom_knob.h"
+#include <gtk/gtk.h>
 #include <math.h>
 
-// Data Structure to hold widgets for GUI
+// Data structure to hold widgets for GUI
 typedef struct {
-    KnobData *knob_pitch;
-    KnobData *knob_speed;
-    KnobData *knob_echo;
-    KnobData *knob_reverb;
+    GtkWidget *knob_pitch;
+    GtkWidget *knob_speed;
+    GtkWidget *knob_echo;
+    GtkWidget *knob_reverb;
     ModulationParams *params;
 } GUIWidgets;
+
+/**
+ * Callback function for the "Reset" button.
+ * Resets all the knobs to their default values.
+ */
+void on_reset_clicked(GtkWidget *widget, gpointer user_data) {
+    GUIWidgets *widgets = (GUIWidgets *)user_data;
+
+    // Reset modulation parameters to default values
+    widgets->params->pitch_factor = 1.0f;      // Default unmodified pitch
+    widgets->params->speed_factor = 1.0f;      // Default unmodified speed
+    widgets->params->echo_intensity = 0.0f;    // No echo
+    widgets->params->reverb_intensity = 0.0f;  // No reverb
+
+    // Update knobs to reflect default values
+    update_knob(widgets->knob_pitch, M_PI);  // Reset angle to midpoint for default value
+    update_knob(widgets->knob_speed, M_PI);
+    update_knob(widgets->knob_echo, -M_PI);
+    update_knob(widgets->knob_reverb, -M_PI);
+
+    gtk_widget_queue_draw(widgets->knob_pitch);  // Force redraw for each knob
+    gtk_widget_queue_draw(widgets->knob_speed);
+    gtk_widget_queue_draw(widgets->knob_echo);
+    gtk_widget_queue_draw(widgets->knob_reverb);
+}
 
 /**
  * Initializes the GTK application and sets up the main window.
@@ -21,44 +46,51 @@ int init_gui(int *argc, char ***argv, ModulationParams *params) {
     // Create the main window
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "Voice Modulator");
-    gtk_window_set_default_size(GTK_WINDOW(window), 600, 400);
+    gtk_window_set_default_size(GTK_WINDOW(window), 600, 500); // Adjust dimensions to fit all elements
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);       // Disable resizing
 
-    // Create a vertical layout box
+    // Create a vertical box layout
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_add(GTK_CONTAINER(window), vbox);
 
-    // Initialize GUI widget data
+    // Add a header label
+    GtkWidget *header_label = gtk_label_new("<b>Voice Modulator</b>");
+    gtk_label_set_use_markup(GTK_LABEL(header_label), TRUE);   // Enable markup for bold text
+    gtk_box_pack_start(GTK_BOX(vbox), header_label, FALSE, FALSE, 10);
+
+    // Allocate memory for GUI widgets and set the modulation parameters
     GUIWidgets *widgets = g_new0(GUIWidgets, 1);
     widgets->params = params;
 
-    // Create drawing area for knobs
-    GtkWidget *drawing_area = gtk_drawing_area_new();
-    gtk_widget_set_size_request(drawing_area, 600, 300);
-    gtk_box_pack_start(GTK_BOX(vbox), drawing_area, TRUE, TRUE, 0);
+    // Create knobs for each modulation parameter
+    widgets->knob_pitch = create_knob("Pitch", 200, 100);
+    gtk_box_pack_start(GTK_BOX(vbox), widgets->knob_pitch, FALSE, FALSE, 0);
+    g_signal_connect(widgets->knob_pitch, "adjusted", G_CALLBACK(on_knob_adjusted), widgets);
 
-    // Initialize knobs
-    widgets->knob_pitch = g_new0(KnobData, 1);
-    widgets->knob_speed = g_new0(KnobData, 1);
-    widgets->knob_echo = g_new0(KnobData, 1);
-    widgets->knob_reverb = g_new0(KnobData, 1);
+    widgets->knob_speed = create_knob("Speed", 200, 100);
+    gtk_box_pack_start(GTK_BOX(vbox), widgets->knob_speed, FALSE, FALSE, 0);
+    g_signal_connect(widgets->knob_speed, "adjusted", G_CALLBACK(on_knob_adjusted), widgets);
 
-    add_knob(100, 150);  // Pitch knob
-    add_knob(200, 150);  // Speed knob
-    add_knob(300, 150);  // Echo knob
-    add_knob(400, 150);  // Reverb knob
+    widgets->knob_echo = create_knob("Echo", 200, 100);
+    gtk_box_pack_start(GTK_BOX(vbox), widgets->knob_echo, FALSE, FALSE, 0);
+    g_signal_connect(widgets->knob_echo, "adjusted", G_CALLBACK(on_knob_adjusted), widgets);
 
-    // Connect drawing area signals
-    g_signal_connect(drawing_area, "draw", G_CALLBACK(on_draw), NULL);
-    g_signal_connect(drawing_area, "motion-notify-event", G_CALLBACK(on_motion_notify), NULL);
-    g_signal_connect(drawing_area, "button-press-event", G_CALLBACK(on_button_press), NULL);
-    g_signal_connect(drawing_area, "button-release-event", G_CALLBACK(on_button_release), NULL);
+    widgets->knob_reverb = create_knob("Reverb", 200, 100);
+    gtk_box_pack_start(GTK_BOX(vbox), widgets->knob_reverb, FALSE, FALSE, 0);
+    g_signal_connect(widgets->knob_reverb, "adjusted", G_CALLBACK(on_knob_adjusted), widgets);
 
-    gtk_widget_add_events(drawing_area, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
+    // Add Reset button
+    GtkWidget *reset_button = gtk_button_new_with_label("Reset");
+    gtk_box_pack_start(GTK_BOX(vbox), reset_button, FALSE, FALSE, 0);
+    g_signal_connect(reset_button, "clicked", G_CALLBACK(on_reset_clicked), widgets);
 
-    // Add an exit button
+    // Add exit button
     GtkWidget *exit_button = gtk_button_new_with_label("Exit");
     gtk_box_pack_start(GTK_BOX(vbox), exit_button, FALSE, FALSE, 0);
     g_signal_connect(exit_button, "clicked", G_CALLBACK(gtk_main_quit), NULL);
+
+    // Connect the destroy signal for window close
+    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
     // Show all widgets
     gtk_widget_show_all(window);
@@ -68,7 +100,6 @@ int init_gui(int *argc, char ***argv, ModulationParams *params) {
 
 /**
  * Starts the GTK main loop.
- * This function runs the GTK main event loop, handling all user interactions.
  */
 void start_gui() {
     gtk_main();
@@ -76,9 +107,7 @@ void start_gui() {
 
 /**
  * Cleans up resources allocated by the GTK application.
- * This function should be called before exiting the program.
  */
 void cleanup_gui() {
-    // Free knob list resources
-    g_list_free_full(knobs, g_free);
+    // Perform any necessary cleanup, if needed
 }

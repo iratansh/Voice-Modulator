@@ -1,4 +1,8 @@
 #include "custom_knob.h"
+#include <math.h>
+#include <stdlib.h>
+
+#define KNOB_RADIUS 30 // Define the radius of the knob
 
 typedef struct {
     double x;             // Center x-position of the knob
@@ -8,7 +12,7 @@ typedef struct {
 } KnobData;
 
 // Shared list of all knobs
-GList *knobs = NULL;
+static GList *knobs = NULL;
 
 // Draw all knobs in the list
 static gboolean on_draw(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
@@ -93,6 +97,17 @@ void add_knob(double x, double y) {
     knobs = g_list_append(knobs, knob);
 }
 
+// Update an existing knob's position or angle
+void update_knob(int knob_index, double x, double y, double angle) {
+    GList *node = g_list_nth(knobs, knob_index);
+    if (node) {
+        KnobData *knob_data = (KnobData *)node->data;
+        knob_data->x = x;
+        knob_data->y = y;
+        knob_data->angle = angle;
+    }
+}
+
 // Main application
 static void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *window = gtk_application_window_new(app);
@@ -114,4 +129,23 @@ static void activate(GtkApplication *app, gpointer user_data) {
 
     gtk_widget_add_events(drawing_area, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
     gtk_widget_show_all(window);
+
+    // Example of updating a knob
+    g_timeout_add(2000, (GSourceFunc)([] (gpointer data) -> gboolean {
+        update_knob(0, 150, 150, M_PI / 4); // Update the first knob after 2 seconds
+        gtk_widget_queue_draw(GTK_WIDGET(data));
+        return FALSE;
+    }), drawing_area);
 }
+
+// Entry point for the GTK application
+int main(int argc, char **argv) {
+    GtkApplication *app = gtk_application_new("org.example.knob", G_APPLICATION_FLAGS_NONE);
+    g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
+
+    int status = g_application_run(G_APPLICATION(app), argc, argv);
+    g_object_unref(app);
+
+    return status;
+}
+

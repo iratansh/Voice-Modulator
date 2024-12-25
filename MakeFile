@@ -1,14 +1,15 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2 -c99
+CFLAGS = -Wall -Wextra -O2 -std=c99 $(shell pkg-config --cflags gtk+-3.0)
+LIBS = $(shell pkg-config --libs gtk+-3.0) -lportaudio -lm -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework CoreFoundation -framework CoreServices
 TARGET = voice_modulator
 
-SRCS = main.c voice_modulator.c
+SRCS = main.c voice_modulator.c custom_knob.c gui.c phase_vocoder.c
 OBJS = $(SRCS:.c=.o)
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@

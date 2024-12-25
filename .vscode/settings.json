@@ -1,6 +1,8 @@
 {
     "files.associations": {
         ".fantomasignore": "ignore",
-        "phase_vocoder.h": "c"
+        "phase_vocoder.h": "c",
+        "voice_modulator.h": "c",
+        "gui.h": "c"
     }
 }
