@@ -1,20 +1,81 @@
 #include "voice_modulator.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include "portaudio.h"
 
 // Global variables for threads and resources
 static pthread_t input_thread, processing_thread, output_thread;
 static int audio_running = 0; // Indicates if the audio pipeline is running
+static PaStream *input_stream, *output_stream;
+static float input_buffer[FRAME_SIZE];
+static float output_buffer[FRAME_SIZE];
 
-int capture_audio_input() {
-    // Implement audio input capture logic using PortAudio
+static ThreadSync sync = {
+    .lock = PTHREAD_MUTEX_INITIALIZER,
+    .cond = PTHREAD_COND_INITIALIZER,
+    .data_ready = 0
+};
+
+// Function prototypes
+int capture_audio_input();
+int send_audio_output();
+void cleanup_audio_pipeline();
+void cleanup_audio_io();
+void* audio_input_thread(void* arg);
+void* audio_processing_thread(void* arg);
+void* audio_output_thread(void* arg);
+
+// Initialize PortAudio streams
+int init_audio_io(size_t sample_rate) {
+    if (Pa_Initialize() != paNoError) {
+        printf("Error: Failed to initialize PortAudio.\n");
+        return -1;
+    }
+
+    // Configure input stream
+    if (Pa_OpenDefaultStream(&input_stream, 1, 0, paFloat32, sample_rate, FRAME_SIZE, NULL, NULL) != paNoError) {
+        printf("Error: Failed to open input stream.\n");
+        return -1;
+    }
+
+    // Configure output stream
+    if (Pa_OpenDefaultStream(&output_stream, 0, 1, paFloat32, sample_rate, FRAME_SIZE, NULL, NULL) != paNoError) {
+        printf("Error: Failed to open output stream.\n");
+        return -1;
+    }
+
+    if (Pa_StartStream(input_stream) != paNoError || Pa_StartStream(output_stream) != paNoError) {
+        printf("Error: Failed to start audio streams.\n");
+        return -1;
+    }
+
     return 0;
 }
 
+// Capture audio input
+int capture_audio_input() {
+    if (Pa_ReadStream(input_stream, input_buffer, FRAME_SIZE) != paNoError) {
+        printf("Error: Failed to read from input stream.\n");
+        return -1;
+    }
+
+    // Signal processing thread
+    pthread_mutex_lock(&sync.lock);
+    sync.data_ready = 1;
+    pthread_cond_signal(&sync.cond);
+    pthread_mutex_unlock(&sync.lock);
+
+    return 0;
+}
+
+// Send audio output
+int send_audio_output() {
+    if (Pa_WriteStream(output_stream, output_buffer, FRAME_SIZE) != paNoError) {
+        printf("Error: Failed to write to output stream.\n");
+        return -1;
+    }
+    return 0;
+}
+
+// Audio input thread
 void* audio_input_thread(void* arg) {
-    ModulationParams* params = (ModulationParams*)arg;
     while (audio_running) {
         if (capture_audio_input() < 0) {
             printf("Error: Failed to capture audio input.\n");
@@ -23,18 +84,33 @@ void* audio_input_thread(void* arg) {
     return NULL;
 }
 
+// Audio processing thread
 void* audio_processing_thread(void* arg) {
+    printf("Processing audio buffer...\n");
+
     ModulationParams* params = (ModulationParams*)arg;
+    
     while (audio_running) {
-        if (apply_modulation_effects(params) < 0) {
-            printf("Error: Failed to process audio.\n");
+        pthread_mutex_lock(&sync.lock);
+        while (!sync.data_ready && audio_running) {
+            pthread_cond_wait(&sync.cond, &sync.lock);
+        }
+        sync.data_ready = 0;
+        pthread_mutex_unlock(&sync.lock);
+
+        // Apply phase vocoder for pitch modification
+        if (params) {
+            phase_vocoder(input_buffer, output_buffer, FRAME_SIZE, params->pitch_factor);
+        } else {
+            memcpy(output_buffer, input_buffer, FRAME_SIZE * sizeof(float));
         }
     }
+
     return NULL;
 }
 
+// Audio output thread
 void* audio_output_thread(void* arg) {
-    ModulationParams* params = (ModulationParams*)arg;
     while (audio_running) {
         if (send_audio_output() < 0) {
             printf("Error: Failed to send audio output.\n");
@@ -43,6 +119,7 @@ void* audio_output_thread(void* arg) {
     return NULL;
 }
 
+// Initialize the audio pipeline
 int init_audio_pipeline(ModulationParams* params) {
     if (params == NULL) {
         printf("Error: ModulationParams is NULL.\n");
@@ -77,29 +154,7 @@ int init_audio_pipeline(ModulationParams* params) {
     return 0;
 }
 
-int init_audio_io(size_t sample_rate) {
-    if (Pa_Initialize() != paNoError) {
-        printf("Error: Failed to initialize PortAudio.\n");
-        return -1;
-    }
-
-    // Initialize audio stream using PortAudio
-    // Use sample_rate for configuration
-    return 0;
-}
-
-int apply_modulation_effects(ModulationParams* params) {
-    // Example placeholder: Implement audio processing logic
-    // Use params for pitch, speed, echo, reverb
-    phase_vocoder(input_buffer, output_buffer, FRAME_SIZE, params->pitch_factor);
-    return 0;
-}
-
-int send_audio_output() {
-    // Implement audio output logic using PortAudio
-    return 0;
-}
-
+// Cleanup the audio pipeline
 void cleanup_audio_pipeline() {
     audio_running = 0;
 
@@ -110,43 +165,29 @@ void cleanup_audio_pipeline() {
     cleanup_audio_io();
 }
 
+// Cleanup PortAudio resources
 void cleanup_audio_io() {
-    // Close audio stream and terminate PortAudio
+    if (input_stream) Pa_CloseStream(input_stream);
+    if (output_stream) Pa_CloseStream(output_stream);
     Pa_Terminate();
 }
 
-float pitch_modulation(float x, float pitch_factor) {
-    return x / pitch_factor;
-}
+// Testing audio pipeline
+int main() {
+    ModulationParams params = {
+        .sample_rate = 44100,
+        .pitch_factor = 1.2f // Increase pitch slightly
+    };
 
-float speed_modulation(float x, float speed_factor) {
-    return x / speed_factor;
-}
-
-float echo_effect(float* x, float alpha, size_t delay) {
-    if (delay == 0) return *x; // Avoid division by zero
-    return *x + alpha * x[delay];
-}
-
-float reverb_effect(float* x, float* h, size_t L) {
-    float y = 0.0;
-    for (size_t k = 0; k < L; k++) {
-        y += h[k] * x[k];
+    if (init_audio_pipeline(&params) < 0) {
+        printf("Error: Failed to initialize audio pipeline.\n");
+        return -1;
     }
-    return y;
-}
 
-int process_audio(const float* input, float* output, size_t sample_count, ModulationParams* params) {
-    for (size_t i = 0; i < sample_count; i++) {
-        output[i] = pitch_modulation(input[i], params->pitch);
-        output[i] = speed_modulation(output[i], params->speed);
-        output[i] = echo_effect(output, params->echo_intensity, params->echo_delay);
-        // Apply more effects as needed
-    }
+    printf("Audio pipeline running. Press Enter to stop...\n");
+    getchar(); // Keep running until user presses Enter
+
+    cleanup_audio_pipeline();
+    printf("Audio pipeline stopped.\n");
     return 0;
-}
-
-void update_modulation_params(ModulationParams* params) {
-    // Update global parameters or configurations
-    
 }

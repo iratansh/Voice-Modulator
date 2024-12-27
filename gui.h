@@ -1,17 +1,22 @@
-#ifndef GUI_H
-#define GUI_H
-
 #include <gtk/gtk.h>
+#include <math.h>
+#include <stdio.h>
+#include "voice_modulator.h"
+#include "phase_vocoder.h"
 
-int init_gui(int* argc, char*** argv, ModulationParams* params);
-GtkWidget* create_slider(const char* label, double min, double max, double step, double initial,
-                         void (*update_callback)(GtkRange* range, gpointer user_data),
-                         gpointer user_data);
-void on_pitch_slider_change(GtkRange* range, gpointer user_data);
-void on_speed_slider_change(GtkRange* range, gpointer user_data);
-void on_echo_slider_change(GtkRange* range, gpointer user_data);
-void on_reverb_slider_change(GtkRange* range, gpointer user_data);
+// Data structure to hold widgets and modulation parameters
+typedef struct {
+    GtkWidget *knob_pitch;
+    GtkWidget *knob_speed;
+    GtkWidget *knob_echo;
+    GtkWidget *knob_reverb;
+    float pitch;
+    float speed;
+    float echo;
+    float reverb;
+} GUIWidgets;
+
+void on_reset_clicked(GtkWidget *widget, gpointer user_data);
+void on_knob_adjusted(GtkWidget *widget, GdkEvent *event, gpointer user_data);
+int init_gui(int *argc, char ***argv, GUIWidgets *widgets);
 void start_gui();
-void cleanup_gui();
-
-#endif

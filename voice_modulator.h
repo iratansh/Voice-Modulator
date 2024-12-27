@@ -1,9 +1,8 @@
-#ifndef VOICE_MODULATOR_H
-#define VOICE_MODULATOR_H
-
-#include <stddef.h>
-#include <stdint.h>
+#include "phase_vocoder.h"
+#include <string.h> 
+#include <stdio.h>
 #include <pthread.h>
+#include "portaudio.h"
 
 // Data structure to hold voice modulation parameters
 typedef struct {
@@ -15,10 +14,20 @@ typedef struct {
     size_t sample_rate;      // Audio sample rate 
 } ModulationParams;
 
-int init_audio_pipeline(ModulationParams* params);
-int process_audio(const float* input, float* output, size_t sample_count, ModulationParams* params);
-void update_modulation_params(ModulationParams* params);
+// Struct for thread synchronization
+typedef struct {
+    pthread_mutex_t lock;
+    pthread_cond_t cond;
+    int data_ready;
+} ThreadSync;
+
+// Function prototypes
+int capture_audio_input();
+int send_audio_output();
 void cleanup_audio_pipeline();
-
-#endif 
-
+void cleanup_audio_io();
+void* audio_input_thread(void* arg);
+void* audio_processing_thread(void* arg);
+void* audio_output_thread(void* arg);
+int init_audio_io(size_t sample_rate);
+int init_audio_pipeline(ModulationParams* params);
