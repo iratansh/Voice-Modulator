@@ -7,10 +7,24 @@ static PaStream *input_stream, *output_stream;
 static float input_buffer[FRAME_SIZE];
 static float output_buffer[FRAME_SIZE];
 
+typedef struct {
+    pthread_mutex_t lock;
+    pthread_cond_t input_ready;
+    pthread_cond_t process_ready;
+    pthread_cond_t output_ready;
+    int input_ready_flag;
+    int process_ready_flag;
+    int output_ready_flag;
+} ThreadSync;
+
 static ThreadSync sync = {
     .lock = PTHREAD_MUTEX_INITIALIZER,
-    .cond = PTHREAD_COND_INITIALIZER,
-    .data_ready = 0
+    .input_ready = PTHREAD_COND_INITIALIZER,
+    .process_ready = PTHREAD_COND_INITIALIZER,
+    .output_ready = PTHREAD_COND_INITIALIZER,
+    .input_ready_flag = 0,
+    .process_ready_flag = 0,
+    .output_ready_flag = 0
 };
 
 // Function prototypes
@@ -56,10 +70,9 @@ int capture_audio_input() {
         return -1;
     }
 
-    // Signal processing thread
     pthread_mutex_lock(&sync.lock);
-    sync.data_ready = 1;
-    pthread_cond_signal(&sync.cond);
+    sync.input_ready_flag = 1;
+    pthread_cond_signal(&sync.input_ready);
     pthread_mutex_unlock(&sync.lock);
 
     return 0;
@@ -67,12 +80,14 @@ int capture_audio_input() {
 
 // Send audio output
 int send_audio_output() {
-    if (Pa_WriteStream(output_stream, output_buffer, FRAME_SIZE) != paNoError) {
-        printf("Error: Failed to write to output stream.\n");
+    PaError err = Pa_WriteStream(output_stream, output_buffer, FRAME_SIZE);
+    if (err != paNoError) {
+        printf("Error writing to output stream: %s\n", Pa_GetErrorText(err));
         return -1;
     }
     return 0;
 }
+
 
 // Audio input thread
 void* audio_input_thread(void* arg) {
@@ -86,35 +101,52 @@ void* audio_input_thread(void* arg) {
 
 // Audio processing thread
 void* audio_processing_thread(void* arg) {
-    printf("Processing audio buffer...\n");
-
     ModulationParams* params = (ModulationParams*)arg;
-    
+
     while (audio_running) {
+        // Wait for input
         pthread_mutex_lock(&sync.lock);
-        while (!sync.data_ready && audio_running) {
-            pthread_cond_wait(&sync.cond, &sync.lock);
+        while (!sync.input_ready_flag && audio_running) {
+            pthread_cond_wait(&sync.input_ready, &sync.lock);
         }
-        sync.data_ready = 0;
+        sync.input_ready_flag = 0;
         pthread_mutex_unlock(&sync.lock);
 
-        // Apply phase vocoder for pitch modification
+        // Process audio
         if (params) {
             phase_vocoder(input_buffer, output_buffer, FRAME_SIZE, params->pitch_factor);
         } else {
             memcpy(output_buffer, input_buffer, FRAME_SIZE * sizeof(float));
         }
-    }
 
+        // Signal output thread
+        pthread_mutex_lock(&sync.lock);
+        sync.output_ready_flag = 1;
+        pthread_cond_signal(&sync.output_ready);
+        pthread_mutex_unlock(&sync.lock);
+    }
     return NULL;
 }
 
-// Audio output thread
 void* audio_output_thread(void* arg) {
     while (audio_running) {
+        // Wait for processed data
+        pthread_mutex_lock(&sync.lock);
+        while (!sync.output_ready_flag && audio_running) {
+            pthread_cond_wait(&sync.output_ready, &sync.lock);
+        }
+        sync.output_ready_flag = 0;
+        pthread_mutex_unlock(&sync.lock);
+
         if (send_audio_output() < 0) {
             printf("Error: Failed to send audio output.\n");
         }
+
+        // Signal input thread that we're ready for more
+        pthread_mutex_lock(&sync.lock);
+        sync.input_ready_flag = 1;
+        pthread_cond_signal(&sync.input_ready);
+        pthread_mutex_unlock(&sync.lock);
     }
     return NULL;
 }

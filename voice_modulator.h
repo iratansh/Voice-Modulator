@@ -17,8 +17,12 @@ typedef struct {
 // Struct for thread synchronization
 typedef struct {
     pthread_mutex_t lock;
-    pthread_cond_t cond;
-    int data_ready;
+    pthread_cond_t input_ready;
+    pthread_cond_t process_ready;
+    pthread_cond_t output_ready;
+    int input_ready_flag;
+    int process_ready_flag;
+    int output_ready_flag;
 } ThreadSync;
 
 // Function prototypes
