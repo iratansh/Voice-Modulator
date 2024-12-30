@@ -73,11 +73,11 @@ static float* get_window() {
     return window;
 }
 
-// Optimized FFT bin processing
 void process_fft_bins(fftwf_complex* fft_out, float* prev_phase, 
                      float* phase_accum, float pitch_factor) {
     const size_t bins = FRAME_SIZE / 2 + 1;
     const float two_pi = 2 * M_PI;
+    const float expect_phase_diff = two_pi * HOP_SIZE / FRAME_SIZE;
     
     #pragma omp parallel for
     for (size_t k = 0; k < bins; k++) {
@@ -86,12 +86,21 @@ void process_fft_bins(fftwf_complex* fft_out, float* prev_phase,
         float mag = sqrtf(real * real + imag * imag);
         float phase = atan2f(imag, real);
         
+        // Improved phase unwrapping
         float phase_diff = phase - prev_phase[k];
+        phase_diff = phase_diff - two_pi * roundf(phase_diff / two_pi);
+        
+        // Compute true frequency
+        float true_freq = k * expect_phase_diff + phase_diff;
+        
+        // Apply pitch shifting
+        float shifted_freq = true_freq * pitch_factor;
+        
+        // Accumulate phase
+        phase_accum[k] += shifted_freq;
         prev_phase[k] = phase;
         
-        phase_diff -= two_pi * roundf(phase_diff / two_pi);
-        phase_accum[k] += phase_diff * pitch_factor;
-        
+        // Generate output
         float new_phase = phase_accum[k];
         fft_out[k] = mag * (cosf(new_phase) + I * sinf(new_phase));
     }

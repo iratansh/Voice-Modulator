@@ -13,7 +13,14 @@
 #ifndef HOP_SIZE
 #define HOP_SIZE (FRAME_SIZE / OVERLAP_RATIO)
 #endif
-#define BUFFER_SIZE (FRAME_SIZE * 4) 
+#ifdef BUFFER_SIZE
+#define BUFFER_SIZE (FRAME_SIZE * 8) 
+#endif
+
+#define NOISE_FLOOR 0.001f
+#define TARGET_RMS 0.2f
+#define GAIN_SMOOTH_FACTOR 0.005f  
+#define RMS_SMOOTH_FACTOR 0.1f
 
 // Data structure to hold voice modulation parameters
 typedef struct {

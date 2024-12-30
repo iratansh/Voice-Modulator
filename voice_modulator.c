@@ -45,7 +45,6 @@ int init_audio_io(size_t sample_rate) {
                deviceInfo->maxOutputChannels);
     }
 
-    // Get default devices
     PaDeviceIndex inputDevice = Pa_GetDefaultInputDevice();
     PaDeviceIndex outputDevice = Pa_GetDefaultOutputDevice();
     
@@ -57,7 +56,7 @@ int init_audio_io(size_t sample_rate) {
         .device = inputDevice,
         .channelCount = 1,
         .sampleFormat = paFloat32,
-        .suggestedLatency = Pa_GetDeviceInfo(inputDevice)->defaultLowInputLatency,
+        .suggestedLatency = 0.005,
         .hostApiSpecificStreamInfo = NULL
     };
 
@@ -66,11 +65,10 @@ int init_audio_io(size_t sample_rate) {
         .device = outputDevice,
         .channelCount = 1,
         .sampleFormat = paFloat32,
-        .suggestedLatency = Pa_GetDeviceInfo(outputDevice)->defaultLowOutputLatency,
+        .suggestedLatency = 0.005,
         .hostApiSpecificStreamInfo = NULL
     };
 
-    // Add debug prints for stream opening
     printf("Opening input stream...\n");
     err = Pa_OpenStream(&input_stream,
                        &inputParams,
@@ -167,8 +165,10 @@ void* audio_input_thread(void* arg) {
 void* audio_processing_thread(void* arg) {
     ModulationParams* params = (ModulationParams*)arg;
     float temp_buffer[FRAME_SIZE];
-    int frames_processed = 0;
-
+    float processed_buffer[FRAME_SIZE];
+    float running_rms = 0.0f;
+    float current_gain = 1.0f;
+    
     while (audio_running) {
         pthread_mutex_lock(&sync.lock);
         while (!sync.input_ready_flag && audio_running) {
@@ -179,49 +179,53 @@ void* audio_processing_thread(void* arg) {
         sync.input_ready_flag = 0;
         pthread_mutex_unlock(&sync.lock);
 
-        // Check if we're receiving audio input
-        float max_amplitude_input = 0;
+        // Calculate input RMS
+        float frame_rms = 0.0f;
         for (int i = 0; i < FRAME_SIZE; i++) {
-            if (fabs(temp_buffer[i]) > max_amplitude_input) {
-                max_amplitude_input = fabs(temp_buffer[i]);
-            }
+            frame_rms += temp_buffer[i] * temp_buffer[i];
         }
+        frame_rms = sqrtf(frame_rms / FRAME_SIZE);
 
-        frames_processed++;
-        if (frames_processed % 100 == 0) {  // Print every 100 frames
-            printf("Processing frame %d, input max amplitude: %f\n", frames_processed, max_amplitude_input);
+        // Update running RMS with smoothing
+        running_rms = running_rms * (1.0f - RMS_SMOOTH_FACTOR) + 
+                     frame_rms * RMS_SMOOTH_FACTOR;
+
+        // Skip processing if input is too quiet (noise gate)
+        if (running_rms < NOISE_FLOOR) {
+            memset(output_buffer, 0, FRAME_SIZE * sizeof(float));
+            pthread_mutex_lock(&sync.lock);
+            sync.output_ready_flag = 1;
+            pthread_cond_signal(&sync.output_ready);
+            pthread_mutex_unlock(&sync.lock);
+            continue;
         }
 
         // Process audio using the phase vocoder
-        if (params) {
-            if (phase_vocoder(temp_buffer, output_buffer, FRAME_SIZE, params->pitch_factor) < 0) {
-                printf("Error: Failed to process audio.\n");
-                continue;
-            }
-        }
-
-        // Normalize output buffer
-        float max_amplitude_output = 0.0f;
-        for (int i = 0; i < FRAME_SIZE; i++) {
-            if (fabs(output_buffer[i]) > max_amplitude_output) {
-                max_amplitude_output = fabs(output_buffer[i]);
-            }
-        }
-
-        if (max_amplitude_output > 0.0f) {
-            float normalization_factor = 0.9f / max_amplitude_output; 
+        if (params && phase_vocoder(temp_buffer, processed_buffer, FRAME_SIZE, params->pitch_factor) >= 0) {
+            // Calculate desired gain to reach target RMS
+            float desired_gain = running_rms > NOISE_FLOOR ? 
+                               TARGET_RMS / running_rms : current_gain;
+            
+            // Smooth gain changes
+            current_gain = current_gain * (1.0f - GAIN_SMOOTH_FACTOR) + 
+                         desired_gain * GAIN_SMOOTH_FACTOR;
+            
+            // Apply gain with soft limiting
             for (int i = 0; i < FRAME_SIZE; i++) {
-                output_buffer[i] *= normalization_factor;
+                float sample = processed_buffer[i] * current_gain;
+                // Soft limiting to prevent clipping
+                output_buffer[i] = sample / (1.0f + fabsf(sample));
             }
+        } else {
+            printf("Error: Failed to process audio.\n");
+            continue;
         }
 
-        // Signal output thread
         pthread_mutex_lock(&sync.lock);
         sync.output_ready_flag = 1;
         pthread_cond_signal(&sync.output_ready);
         pthread_mutex_unlock(&sync.lock);
     }
-
     return NULL;
 }
 
@@ -249,8 +253,6 @@ void* audio_output_thread(void* arg) {
     }
     return NULL;
 }
-
-
 
 // Update init_audio_pipeline
 int init_audio_pipeline(ModulationParams* params) {

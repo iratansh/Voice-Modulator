@@ -14,9 +14,10 @@
 #define SIMD_AVAILABLE 0
 #endif
 
-#define FRAME_SIZE 2048
-#define OVERLAP_RATIO 4  
+#define FRAME_SIZE 1024  // Reduced from 2048 for lower latency
+#define OVERLAP_RATIO 4
 #define HOP_SIZE (FRAME_SIZE / OVERLAP_RATIO)
+#define BUFFER_SIZE (FRAME_SIZE * 8)
 
 typedef struct {
     float* buffer;
