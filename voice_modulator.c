@@ -6,16 +6,7 @@ static int audio_running = 0; // Indicates if the audio pipeline is running
 static PaStream *input_stream, *output_stream;
 static float input_buffer[FRAME_SIZE];
 static float output_buffer[FRAME_SIZE];
-
-typedef struct {
-    pthread_mutex_t lock;
-    pthread_cond_t input_ready;
-    pthread_cond_t process_ready;
-    pthread_cond_t output_ready;
-    int input_ready_flag;
-    int process_ready_flag;
-    int output_ready_flag;
-} ThreadSync;
+static CircularBuffer* audio_buffer;
 
 static ThreadSync sync = {
     .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -36,34 +27,103 @@ void* audio_input_thread(void* arg);
 void* audio_processing_thread(void* arg);
 void* audio_output_thread(void* arg);
 
-// Initialize PortAudio streams
 int init_audio_io(size_t sample_rate) {
-    if (Pa_Initialize() != paNoError) {
-        printf("Error: Failed to initialize PortAudio.\n");
+    PaError err = Pa_Initialize();
+    if (err != paNoError) {
+        printf("Error: Failed to initialize PortAudio: %s\n", Pa_GetErrorText(err));
         return -1;
     }
 
-    // Configure input stream
-    if (Pa_OpenDefaultStream(&input_stream, 1, 0, paFloat32, sample_rate, FRAME_SIZE, NULL, NULL) != paNoError) {
-        printf("Error: Failed to open input stream.\n");
+    // Print available devices
+    int numDevices = Pa_GetDeviceCount();
+    printf("Available audio devices:\n");
+    for(int i = 0; i < numDevices; i++) {
+        const PaDeviceInfo* deviceInfo = Pa_GetDeviceInfo(i);
+        printf("%d: %s (in: %d, out: %d)\n", 
+               i, deviceInfo->name, 
+               deviceInfo->maxInputChannels,
+               deviceInfo->maxOutputChannels);
+    }
+
+    // Get default devices
+    PaDeviceIndex inputDevice = Pa_GetDefaultInputDevice();
+    PaDeviceIndex outputDevice = Pa_GetDefaultOutputDevice();
+    
+    printf("Using input device: %s\n", Pa_GetDeviceInfo(inputDevice)->name);
+    printf("Using output device: %s\n", Pa_GetDeviceInfo(outputDevice)->name);
+
+    // Input stream parameters
+    PaStreamParameters inputParams = {
+        .device = inputDevice,
+        .channelCount = 1,
+        .sampleFormat = paFloat32,
+        .suggestedLatency = Pa_GetDeviceInfo(inputDevice)->defaultLowInputLatency,
+        .hostApiSpecificStreamInfo = NULL
+    };
+
+    // Output stream parameters
+    PaStreamParameters outputParams = {
+        .device = outputDevice,
+        .channelCount = 1,
+        .sampleFormat = paFloat32,
+        .suggestedLatency = Pa_GetDeviceInfo(outputDevice)->defaultLowOutputLatency,
+        .hostApiSpecificStreamInfo = NULL
+    };
+
+    // Add debug prints for stream opening
+    printf("Opening input stream...\n");
+    err = Pa_OpenStream(&input_stream,
+                       &inputParams,
+                       NULL,
+                       sample_rate,
+                       FRAME_SIZE,
+                       paClipOff,
+                       NULL,
+                       NULL);
+    if (err != paNoError) {
+        printf("Error: Failed to open input stream: %s\n", Pa_GetErrorText(err));
         return -1;
     }
 
-    // Configure output stream
-    if (Pa_OpenDefaultStream(&output_stream, 0, 1, paFloat32, sample_rate, FRAME_SIZE, NULL, NULL) != paNoError) {
-        printf("Error: Failed to open output stream.\n");
+    printf("Opening output stream...\n");
+    err = Pa_OpenStream(&output_stream,
+                       NULL,
+                       &outputParams,
+                       sample_rate,
+                       FRAME_SIZE,
+                       paClipOff,
+                       NULL,
+                       NULL);
+    if (err != paNoError) {
+        printf("Error: Failed to open output stream: %s\n", Pa_GetErrorText(err));
+        Pa_CloseStream(input_stream);
         return -1;
     }
 
-    if (Pa_StartStream(input_stream) != paNoError || Pa_StartStream(output_stream) != paNoError) {
-        printf("Error: Failed to start audio streams.\n");
+    // Start streams with debug prints
+    printf("Starting input stream...\n");
+    err = Pa_StartStream(input_stream);
+    if (err != paNoError) {
+        printf("Error: Failed to start input stream: %s\n", Pa_GetErrorText(err));
+        Pa_CloseStream(input_stream);
+        Pa_CloseStream(output_stream);
         return -1;
     }
 
+    printf("Starting output stream...\n");
+    err = Pa_StartStream(output_stream);
+    if (err != paNoError) {
+        printf("Error: Failed to start output stream: %s\n", Pa_GetErrorText(err));
+        Pa_StopStream(input_stream);
+        Pa_CloseStream(input_stream);
+        Pa_CloseStream(output_stream);
+        return -1;
+    }
+
+    printf("Audio I/O initialized successfully\n");
     return 0;
 }
 
-// Capture audio input
 int capture_audio_input() {
     if (Pa_ReadStream(input_stream, input_buffer, FRAME_SIZE) != paNoError) {
         printf("Error: Failed to read from input stream.\n");
@@ -78,7 +138,6 @@ int capture_audio_input() {
     return 0;
 }
 
-// Send audio output
 int send_audio_output() {
     PaError err = Pa_WriteStream(output_stream, output_buffer, FRAME_SIZE);
     if (err != paNoError) {
@@ -88,35 +147,72 @@ int send_audio_output() {
     return 0;
 }
 
-
-// Audio input thread
+// Update audio_input_thread
 void* audio_input_thread(void* arg) {
     while (audio_running) {
-        if (capture_audio_input() < 0) {
-            printf("Error: Failed to capture audio input.\n");
+        if (Pa_ReadStream(input_stream, input_buffer, FRAME_SIZE) != paNoError) {
+            printf("Error: Failed to read from input stream.\n");
+            continue;
         }
+
+        pthread_mutex_lock(&sync.lock);
+        circular_buffer_write(audio_buffer, input_buffer, FRAME_SIZE);
+        sync.input_ready_flag = 1;
+        pthread_cond_signal(&sync.input_ready);
+        pthread_mutex_unlock(&sync.lock);
     }
     return NULL;
 }
 
-// Audio processing thread
 void* audio_processing_thread(void* arg) {
     ModulationParams* params = (ModulationParams*)arg;
+    float temp_buffer[FRAME_SIZE];
+    int frames_processed = 0;
 
     while (audio_running) {
-        // Wait for input
         pthread_mutex_lock(&sync.lock);
         while (!sync.input_ready_flag && audio_running) {
             pthread_cond_wait(&sync.input_ready, &sync.lock);
         }
+        
+        circular_buffer_read(audio_buffer, temp_buffer, FRAME_SIZE);
         sync.input_ready_flag = 0;
         pthread_mutex_unlock(&sync.lock);
 
-        // Process audio
+        // Check if we're receiving audio input
+        float max_amplitude_input = 0;
+        for (int i = 0; i < FRAME_SIZE; i++) {
+            if (fabs(temp_buffer[i]) > max_amplitude_input) {
+                max_amplitude_input = fabs(temp_buffer[i]);
+            }
+        }
+
+        frames_processed++;
+        if (frames_processed % 100 == 0) {  // Print every 100 frames
+            printf("Processing frame %d, input max amplitude: %f\n", frames_processed, max_amplitude_input);
+        }
+
+        // Process audio using the phase vocoder
         if (params) {
-            phase_vocoder(input_buffer, output_buffer, FRAME_SIZE, params->pitch_factor);
-        } else {
-            memcpy(output_buffer, input_buffer, FRAME_SIZE * sizeof(float));
+            if (phase_vocoder(temp_buffer, output_buffer, FRAME_SIZE, params->pitch_factor) < 0) {
+                printf("Error: Failed to process audio.\n");
+                continue;
+            }
+        }
+
+        // Normalize output buffer
+        float max_amplitude_output = 0.0f;
+        for (int i = 0; i < FRAME_SIZE; i++) {
+            if (fabs(output_buffer[i]) > max_amplitude_output) {
+                max_amplitude_output = fabs(output_buffer[i]);
+            }
+        }
+
+        if (max_amplitude_output > 0.0f) {
+            float normalization_factor = 0.9f / max_amplitude_output; 
+            for (int i = 0; i < FRAME_SIZE; i++) {
+                output_buffer[i] *= normalization_factor;
+            }
         }
 
         // Signal output thread
@@ -125,12 +221,14 @@ void* audio_processing_thread(void* arg) {
         pthread_cond_signal(&sync.output_ready);
         pthread_mutex_unlock(&sync.lock);
     }
+
     return NULL;
 }
 
 void* audio_output_thread(void* arg) {
+    int frames_output = 0;
+    
     while (audio_running) {
-        // Wait for processed data
         pthread_mutex_lock(&sync.lock);
         while (!sync.output_ready_flag && audio_running) {
             pthread_cond_wait(&sync.output_ready, &sync.lock);
@@ -138,23 +236,33 @@ void* audio_output_thread(void* arg) {
         sync.output_ready_flag = 0;
         pthread_mutex_unlock(&sync.lock);
 
-        if (send_audio_output() < 0) {
-            printf("Error: Failed to send audio output.\n");
+        PaError err = Pa_WriteStream(output_stream, output_buffer, FRAME_SIZE);
+        if (err != paNoError) {
+            printf("Error: Failed to write to output stream: %s\n", Pa_GetErrorText(err));
+            continue;
         }
 
-        // Signal input thread that we're ready for more
-        pthread_mutex_lock(&sync.lock);
-        sync.input_ready_flag = 1;
-        pthread_cond_signal(&sync.input_ready);
-        pthread_mutex_unlock(&sync.lock);
+        frames_output++;
+        if(frames_output % 100 == 0) {  // Print every 100 frames
+            printf("Output frame %d\n", frames_output);
+        }
     }
     return NULL;
 }
 
-// Initialize the audio pipeline
+
+
+// Update init_audio_pipeline
 int init_audio_pipeline(ModulationParams* params) {
     if (params == NULL) {
         printf("Error: ModulationParams is NULL.\n");
+        return -1;
+    }
+
+    // Initialize circular buffer
+    audio_buffer = create_circular_buffer(BUFFER_SIZE);
+    if (!audio_buffer) {
+        printf("Error: Failed to create audio buffer.\n");
         return -1;
     }
 
@@ -186,7 +294,6 @@ int init_audio_pipeline(ModulationParams* params) {
     return 0;
 }
 
-// Cleanup the audio pipeline
 void cleanup_audio_pipeline() {
     audio_running = 0;
 
@@ -195,30 +302,32 @@ void cleanup_audio_pipeline() {
     pthread_join(output_thread, NULL);
 
     cleanup_audio_io();
+    cleanup_phase_vocoder();
 }
 
-// Cleanup PortAudio resources
 void cleanup_audio_io() {
     if (input_stream) Pa_CloseStream(input_stream);
     if (output_stream) Pa_CloseStream(output_stream);
     Pa_Terminate();
 }
 
-// Testing audio pipeline
 int main() {
     ModulationParams params = {
         .sample_rate = 44100,
-        .pitch_factor = 1.2f // Increase pitch slightly
+        .pitch_factor = 1.2f
     };
 
+    printf("Initializing audio pipeline...\n");
     if (init_audio_pipeline(&params) < 0) {
         printf("Error: Failed to initialize audio pipeline.\n");
         return -1;
     }
 
-    printf("Audio pipeline running. Press Enter to stop...\n");
-    getchar(); // Keep running until user presses Enter
+    printf("Audio pipeline running. Speak into your microphone to hear the pitch-shifted output.\n");
+    printf("Press Enter to stop...\n");
+    getchar();
 
+    printf("Cleaning up...\n");
     cleanup_audio_pipeline();
     printf("Audio pipeline stopped.\n");
     return 0;

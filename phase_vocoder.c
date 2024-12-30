@@ -37,7 +37,7 @@ int circular_buffer_read(CircularBuffer* cb, float* data, size_t length) {
     return 0;
 }
 
-// SIMD optimized window application
+#if SIMD_AVAILABLE
 void apply_window_simd(float* input, float* window, size_t length) {
     size_t i;
     for (i = 0; i + 4 <= length; i += 4) {
@@ -50,6 +50,13 @@ void apply_window_simd(float* input, float* window, size_t length) {
         input[i] *= window[i];
     }
 }
+#else
+void apply_window_simd(float* input, float* window, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        input[i] *= window[i];
+    }
+}
+#endif
 
 // Pre-computed window function
 static float* get_window() {
@@ -134,7 +141,8 @@ int phase_vocoder(const float *input, float *output, size_t length, float pitch_
 
     // Process frames
     #pragma omp parallel for
-    for (size_t frame_start = 0; frame_start + FRAME_SIZE <= length; frame_start += HOP_SIZE) {
+    // Add explicit size_t cast to prevent unsigned comparison issues
+    for (size_t frame_start = 0; frame_start <= (size_t)(length - FRAME_SIZE); frame_start += HOP_SIZE) {
         memcpy((float *)fft_in, input + frame_start, FRAME_SIZE * sizeof(float));
         apply_window_simd((float *)fft_in, window, FRAME_SIZE);
 

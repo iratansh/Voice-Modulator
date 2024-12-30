@@ -4,6 +4,17 @@
 #include <pthread.h>
 #include "portaudio.h"
 
+#ifndef FRAME_SIZE
+#define FRAME_SIZE 256
+#endif
+#ifndef OVERLAP_RATIO
+#define OVERLAP_RATIO 4  
+#endif
+#ifndef HOP_SIZE
+#define HOP_SIZE (FRAME_SIZE / OVERLAP_RATIO)
+#endif
+#define BUFFER_SIZE (FRAME_SIZE * 4) 
+
 // Data structure to hold voice modulation parameters
 typedef struct {
     float pitch_factor;      // Pitch shifting
