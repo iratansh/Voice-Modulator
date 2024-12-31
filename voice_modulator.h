@@ -18,9 +18,9 @@
 #endif
 
 #define NOISE_FLOOR 0.001f
-#define TARGET_RMS 0.2f
-#define GAIN_SMOOTH_FACTOR 0.005f  
-#define RMS_SMOOTH_FACTOR 0.1f
+#define TARGET_RMS 0.3f
+#define GAIN_SMOOTH_FACTOR 0.001f  
+#define RMS_SMOOTH_FACTOR 0.01f
 
 // Data structure to hold voice modulation parameters
 typedef struct {
@@ -53,3 +53,4 @@ void* audio_processing_thread(void* arg);
 void* audio_output_thread(void* arg);
 int init_audio_io(size_t sample_rate);
 int init_audio_pipeline(ModulationParams* params);
+void update_modulation_params(ModulationParams* params, float new_pitch);

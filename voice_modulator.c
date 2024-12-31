@@ -166,8 +166,7 @@ void* audio_processing_thread(void* arg) {
     ModulationParams* params = (ModulationParams*)arg;
     float temp_buffer[FRAME_SIZE];
     float processed_buffer[FRAME_SIZE];
-    float running_rms = 0.0f;
-    float current_gain = 1.0f;
+    float fixed_gain = 2.0f;  // Fixed gain instead of dynamic
     
     while (audio_running) {
         pthread_mutex_lock(&sync.lock);
@@ -179,46 +178,27 @@ void* audio_processing_thread(void* arg) {
         sync.input_ready_flag = 0;
         pthread_mutex_unlock(&sync.lock);
 
-        // Calculate input RMS
+        // Simple RMS check
         float frame_rms = 0.0f;
         for (int i = 0; i < FRAME_SIZE; i++) {
             frame_rms += temp_buffer[i] * temp_buffer[i];
         }
         frame_rms = sqrtf(frame_rms / FRAME_SIZE);
 
-        // Update running RMS with smoothing
-        running_rms = running_rms * (1.0f - RMS_SMOOTH_FACTOR) + 
-                     frame_rms * RMS_SMOOTH_FACTOR;
-
-        // Skip processing if input is too quiet (noise gate)
-        if (running_rms < NOISE_FLOOR) {
+        if (frame_rms < NOISE_FLOOR) {
             memset(output_buffer, 0, FRAME_SIZE * sizeof(float));
-            pthread_mutex_lock(&sync.lock);
-            sync.output_ready_flag = 1;
-            pthread_cond_signal(&sync.output_ready);
-            pthread_mutex_unlock(&sync.lock);
-            continue;
-        }
-
-        // Process audio using the phase vocoder
-        if (params && phase_vocoder(temp_buffer, processed_buffer, FRAME_SIZE, params->pitch_factor) >= 0) {
-            // Calculate desired gain to reach target RMS
-            float desired_gain = running_rms > NOISE_FLOOR ? 
-                               TARGET_RMS / running_rms : current_gain;
-            
-            // Smooth gain changes
-            current_gain = current_gain * (1.0f - GAIN_SMOOTH_FACTOR) + 
-                         desired_gain * GAIN_SMOOTH_FACTOR;
-            
-            // Apply gain with soft limiting
-            for (int i = 0; i < FRAME_SIZE; i++) {
-                float sample = processed_buffer[i] * current_gain;
-                // Soft limiting to prevent clipping
-                output_buffer[i] = sample / (1.0f + fabsf(sample));
-            }
         } else {
-            printf("Error: Failed to process audio.\n");
-            continue;
+            // Process audio with simplified phase vocoder
+            if (params && phase_vocoder(temp_buffer, processed_buffer, FRAME_SIZE, params->pitch_factor) >= 0) {
+                // Apply fixed gain and simple limiting
+                for (int i = 0; i < FRAME_SIZE; i++) {
+                    float sample = processed_buffer[i] * fixed_gain;
+                    // Simple limiter
+                    if (sample > 1.0f) sample = 1.0f;
+                    if (sample < -1.0f) sample = -1.0f;
+                    output_buffer[i] = sample;
+                }
+            }
         }
 
         pthread_mutex_lock(&sync.lock);
@@ -313,10 +293,17 @@ void cleanup_audio_io() {
     Pa_Terminate();
 }
 
+void update_modulation_params(ModulationParams* params, float new_pitch) {
+    if (params) {
+        params->pitch_factor = new_pitch;
+    }
+}
+
+
 int main() {
     ModulationParams params = {
         .sample_rate = 44100,
-        .pitch_factor = 1.2f
+        .pitch_factor = 1.0f
     };
 
     printf("Initializing audio pipeline...\n");
@@ -325,11 +312,79 @@ int main() {
         return -1;
     }
 
-    printf("Audio pipeline running. Speak into your microphone to hear the pitch-shifted output.\n");
-    printf("Press Enter to stop...\n");
-    getchar();
+    printf("\nAudio pipeline running. Speak into your microphone to hear the output.\n");
+    printf("Available commands:\n");
+    printf("1: Normal voice (pitch = 1.0)\n");
+    printf("2: Higher pitch (pitch = 1.5)\n");
+    printf("3: Lower pitch (pitch = 0.75)\n");
+    printf("4: Deep voice (pitch = 0.5)\n");
+    printf("5: Chipmunk voice (pitch = 2.0)\n");
+    printf("6: Custom pitch (you enter the value)\n");
+    printf("q: Quit\n\n");
 
-    printf("Cleaning up...\n");
+    char input[32];
+    while (1) {
+        printf("\nCurrent pitch factor: %.2f\n", params.pitch_factor);
+        printf("Enter command: ");
+        
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            break;
+        }
+
+        input[strcspn(input, "\n")] = 0;
+
+        if (input[0] == 'q' || input[0] == 'Q') {
+            break;
+        }
+
+        float new_pitch = params.pitch_factor;
+        switch (input[0]) {
+            case '1':
+                new_pitch = 1.0f;
+                printf("Setting normal voice (pitch = 1.0)\n");
+                break;
+            case '2':
+                new_pitch = 1.5f;
+                printf("Setting higher pitch (pitch = 1.5)\n");
+                break;
+            case '3':
+                new_pitch = 0.75f;
+                printf("Setting lower pitch (pitch = 0.75)\n");
+                break;
+            case '4':
+                new_pitch = 0.5f;
+                printf("Setting deep voice (pitch = 0.5)\n");
+                break;
+            case '5':
+                new_pitch = 2.0f;
+                printf("Setting chipmunk voice (pitch = 2.0)\n");
+                break;
+            case '6':
+                printf("Enter custom pitch factor (0.25 to 4.0): ");
+                float custom_pitch;
+                if (scanf("%f", &custom_pitch) == 1) {
+                    // Bound the custom pitch to reasonable values
+                    if (custom_pitch < 0.25f) custom_pitch = 0.25f;
+                    if (custom_pitch > 4.0f) custom_pitch = 4.0f;
+                    new_pitch = custom_pitch;
+                    printf("Setting custom pitch factor to %.2f\n", custom_pitch);
+                    // Clear input buffer
+                    int c;
+                    while ((c = getchar()) != '\n' && c != EOF);
+                }
+                break;
+            case '7':
+                exit(0);
+                break;
+            default:
+                printf("Invalid command!\n");
+                continue;
+        }
+
+        update_modulation_params(&params, new_pitch);
+    }
+
+    printf("\nCleaning up...\n");
     cleanup_audio_pipeline();
     printf("Audio pipeline stopped.\n");
     return 0;

@@ -73,11 +73,11 @@ static float* get_window() {
     return window;
 }
 
+// Optimized FFT bin processing
 void process_fft_bins(fftwf_complex* fft_out, float* prev_phase, 
                      float* phase_accum, float pitch_factor) {
     const size_t bins = FRAME_SIZE / 2 + 1;
     const float two_pi = 2 * M_PI;
-    const float expect_phase_diff = two_pi * HOP_SIZE / FRAME_SIZE;
     
     #pragma omp parallel for
     for (size_t k = 0; k < bins; k++) {
@@ -86,37 +86,25 @@ void process_fft_bins(fftwf_complex* fft_out, float* prev_phase,
         float mag = sqrtf(real * real + imag * imag);
         float phase = atan2f(imag, real);
         
-        // Improved phase unwrapping
         float phase_diff = phase - prev_phase[k];
-        phase_diff = phase_diff - two_pi * roundf(phase_diff / two_pi);
-        
-        // Compute true frequency
-        float true_freq = k * expect_phase_diff + phase_diff;
-        
-        // Apply pitch shifting
-        float shifted_freq = true_freq * pitch_factor;
-        
-        // Accumulate phase
-        phase_accum[k] += shifted_freq;
         prev_phase[k] = phase;
         
-        // Generate output
+        phase_diff -= two_pi * roundf(phase_diff / two_pi);
+        phase_accum[k] += phase_diff * pitch_factor;
+        
         float new_phase = phase_accum[k];
         fft_out[k] = mag * (cosf(new_phase) + I * sinf(new_phase));
     }
 }
 
-// Optimized phase vocoder implementation
 int phase_vocoder(const float *input, float *output, size_t length, float pitch_factor) {
     if (input == NULL || output == NULL || length == 0 || pitch_factor <= 0) {
         return -1;
     }
 
-    // Use pre-computed window
     float *window = get_window();
     if (!window) return -1;
 
-    // Static FFT resources
     static fftwf_plan forward_plan = NULL;
     static fftwf_plan inverse_plan = NULL;
     static fftwf_complex *fft_in = NULL;
@@ -132,7 +120,6 @@ int phase_vocoder(const float *input, float *output, size_t length, float pitch_
         inverse_plan = fftwf_plan_dft_c2r_1d(FRAME_SIZE, fft_out, (float *)fft_in, FFTW_MEASURE);
     }
 
-    // Static phase processing buffers
     static float *prev_phase = NULL;
     static float *phase_accum = NULL;
     
@@ -141,39 +128,39 @@ int phase_vocoder(const float *input, float *output, size_t length, float pitch_
         phase_accum = calloc(FRAME_SIZE / 2 + 1, sizeof(float));
     }
 
-    // Initialize overlap buffer if needed
-    if (!overlap_buffer) {
-        overlap_buffer = calloc(FRAME_SIZE, sizeof(float));
+    // Clear output and process frame
+    memset(output, 0, sizeof(float) * length);
+    
+    // Single frame processing without overlap
+    memcpy((float *)fft_in, input, FRAME_SIZE * sizeof(float));
+    
+    // Apply window
+    for (size_t i = 0; i < FRAME_SIZE; i++) {
+        ((float *)fft_in)[i] *= window[i];
     }
 
-    memset(output, 0, sizeof(float) * length);
+    fftwf_execute(forward_plan);
+    
+    // Simple phase processing
+    const size_t bins = FRAME_SIZE / 2 + 1;
+    for (size_t k = 0; k < bins; k++) {
+        float real = crealf(fft_out[k]);
+        float imag = cimagf(fft_out[k]);
+        float mag = sqrtf(real * real + imag * imag);
+        float phase = atan2f(imag, real);
+        
+        // Simple phase modification
+        phase *= pitch_factor;
+        
+        // Reconstruct bin
+        fft_out[k] = mag * (cosf(phase) + I * sinf(phase));
+    }
+    
+    fftwf_execute(inverse_plan);
 
-    // Process frames
-    #pragma omp parallel for
-    // Add explicit size_t cast to prevent unsigned comparison issues
-    for (size_t frame_start = 0; frame_start <= (size_t)(length - FRAME_SIZE); frame_start += HOP_SIZE) {
-        memcpy((float *)fft_in, input + frame_start, FRAME_SIZE * sizeof(float));
-        apply_window_simd((float *)fft_in, window, FRAME_SIZE);
-
-        fftwf_execute(forward_plan);
-        process_fft_bins(fft_out, prev_phase, phase_accum, pitch_factor);
-        fftwf_execute(inverse_plan);
-
-        // Overlap-add with normalization
-        float norm_factor = 1.0f / FRAME_SIZE;
-        for (size_t i = 0; i < FRAME_SIZE; i++) {
-            size_t idx = frame_start + i;
-            if (idx < length) {
-                float processed = ((float *)fft_in)[i] * window[i] * norm_factor;
-                output[idx] = overlap_buffer[i] + processed;
-                
-                if (i + HOP_SIZE < FRAME_SIZE) {
-                    overlap_buffer[i] = overlap_buffer[i + HOP_SIZE];
-                } else {
-                    overlap_buffer[i] = 0;
-                }
-            }
-        }
+    float norm = 1.0f / FRAME_SIZE;
+    for (size_t i = 0; i < FRAME_SIZE; i++) {
+        output[i] = ((float *)fft_in)[i] * norm;
     }
 
     return 0;
