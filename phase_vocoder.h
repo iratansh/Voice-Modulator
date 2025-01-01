@@ -7,12 +7,6 @@
 #include <omp.h>
 #include <pthread.h>
 
-#if defined(__x86_64__) || defined(_M_X64)
-#include <immintrin.h>
-#define SIMD_AVAILABLE 1
-#else
-#define SIMD_AVAILABLE 0
-#endif
 #ifndef NOISE_FLOOR
 #define NOISE_FLOOR 0.001f
 #endif
@@ -30,8 +24,6 @@
 #define OVERLAP_RATIO 4
 #define HOP_SIZE (FRAME_SIZE / OVERLAP_RATIO)
 #define BUFFER_SIZE (FRAME_SIZE * 8)
-
-
 
 typedef struct {
     float* buffer;

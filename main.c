@@ -1,27 +1,39 @@
 #include "gui.h"
-#include "voice_modulator.h"
-
-// Function to initialize the ModulationParams structure with default values
-void init_modulation_params(ModulationParams *params) {
-    if (params == NULL) return;
-
-    params->pitch_factor = 1.0f;          // No pitch modification
-    params->speed_factor = 1.0f;          // Normal speed
-    params->echo_intensity = 0.0f;        // No echo effect
-    params->reverb_intensity = 0.0f;      // No reverb effect
-    params->echo_delay = 500;             // Default echo delay in milliseconds
-    params->sample_rate = 44100;          // Default sample rate 
-}
-
 
 int main(int argc, char **argv) {
-    ModulationParams params;
+    // Initialize GUI widgets structure
+    GUIWidgets widgets = {0};  // Zero-initialize all fields
 
-    // Initialize modulation parameters with default values
-    init_modulation_params(&params);
+    // Initialize modulation parameters with defaults
+    ModulationParams mod_params = {
+        .pitch_factor = 1.0f,
+        .speed_factor = 1.0f,
+        .echo_intensity = 0.0f,
+        .reverb_intensity = 0.0f,
+        .echo_delay = 0,
+        .sample_rate = 44100
+    };
 
-    // Pass the initialized parameters to the GUI
-    init_gui(&argc, &argv, &params);
+    // Initialize the GUI
+    if (init_gui(&argc, &argv, &widgets, &mod_params) < 0) {
+        fprintf(stderr, "Failed to initialize GUI\n");
+        return 1;
+    }
+
+    // Initialize the audio pipeline
+    if (init_audio_pipeline(&mod_params) < 0) {
+        fprintf(stderr, "Failed to initialize audio pipeline\n");
+        return 1;
+    }
+
+    printf("Voice Modulator started. Use the GUI controls to adjust parameters.\n");
+    printf("Press Ctrl+C to exit.\n");
+
+    // Start the GUI main loop
+    start_gui();
+
+    // Cleanup
+    cleanup_audio_pipeline();
 
     return 0;
 }

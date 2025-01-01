@@ -1,20 +1,101 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -O2 -std=c99 $(shell pkg-config --cflags gtk+-3.0)
-LIBS = $(shell pkg-config --libs gtk+-3.0) -lportaudio -lm -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework CoreFoundation -framework CoreServices
+# Makefile Optimized for MacOS M2 Pro Processor
+
+CC = gcc-14
+OPTFLAGS = -O3 -march=armv8.5-a+fp16+fp16fml+simd+crypto \
+           -ffast-math -ftree-vectorize -fomit-frame-pointer
+
+WARNFLAGS = -Wall -Wextra -Wpedantic -Wno-unused-parameter
+
+# Include paths
+INCLUDES = -I/opt/homebrew/include $(shell pkg-config --cflags gtk+-3.0)
+
+# Library paths
+LIBPATHS = -L/opt/homebrew/lib
+
+# Libraries
+LIBS = $(shell pkg-config --libs gtk+-3.0) \
+       -lportaudio -lfftw3f -lfftw3f_threads -lm -lpthread -fopenmp \
+       -framework CoreAudio -framework AudioToolbox -framework AudioUnit \
+       -framework Carbon -framework CoreFoundation -framework CoreServices
+
+# Combine all flags
+CFLAGS = $(OPTFLAGS) $(WARNFLAGS) $(INCLUDES)
+
+# Target executable
 TARGET = voice_modulator
 
-SRCS = main.c voice_modulator.c custom_knob.c gui.c phase_vocoder.c
+# Source files
+SRCS = main.c \
+       voice_modulator.c \
+       phase_vocoder.c \
+       custom_knob.c \
+       gui.c
+
+# Object files
 OBJS = $(SRCS:.c=.o)
 
+# Header files 
+HDRS = voice_modulator.h \
+       phase_vocoder.h \
+       custom_knob.h \
+       gui.h
+
+# Default target
 all: $(TARGET)
 
+# Linking
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
+	@echo "Linking $(TARGET)..."
+	@$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(LIBPATHS) $(LIBS)
+	@echo "Build complete!"
 
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+# Compilation rule
+%.o: %.c $(HDRS)
+	@echo "Compiling $<..."
+	@$(CC) $(CFLAGS) -c $< -o $@
 
+# Clean 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	@echo "Cleaning build files..."
+	@rm -f $(TARGET) $(OBJS)
+	@echo "Clean complete!"
 
-.PHONY: all clean
+# Install target 
+install: $(TARGET)
+	@echo "Installing to /usr/local/bin..."
+	@install -m 755 $(TARGET) /usr/local/bin/
+	@echo "Installation complete!"
+
+# Debug build
+debug: OPTFLAGS = -O0 -g3 -DDEBUG
+debug: clean all
+
+# Release build
+release: OPTFLAGS += -DNDEBUG
+release: clean all
+
+# Generate dependencies
+depend: $(SRCS)
+	@echo "Generating dependencies..."
+	@$(CC) $(CFLAGS) -MM $^ > .depend
+
+-include .depend
+
+# Run the program
+run: $(TARGET)
+	@echo "Running $(TARGET)..."
+	@./$(TARGET)
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  all      : Build the program (default)"
+	@echo "  clean    : Remove build files"
+	@echo "  install  : Install the program"
+	@echo "  debug    : Build with debug flags"
+	@echo "  release  : Build with release flags"
+	@echo "  run      : Build and run the program"
+	@echo "  depend   : Generate dependencies"
+	@echo "  help     : Show this help message"
+
+.PHONY: all clean install debug release run help depend

@@ -6,6 +6,7 @@
         "gui.h": "c",
         "pthread.h": "c",
         "stdio.h": "c",
-        "math.h": "c"
+        "math.h": "c",
+        "custom_knob.h": "c"
     }
 }

@@ -2,10 +2,22 @@
 #include <math.h>
 #include <stdlib.h>
 
-// Shared list of all knobs
+// Global list of knobs
 GList *knobs = NULL;
 
-// Draw all knobs in the list
+/**
+ * Callback to draw a knob widget. This callback is registered with the
+ * GtkWidget passed to add_knob() and is called whenever the widget needs
+ * to be redrawn.
+ *
+ * This function draws a circle for the knob and a red line for the indicator.
+ *
+ * @param widget The GtkWidget being drawn.
+ * @param cr The cairo context to draw with.
+ * @param user_data The KnobData associated with the widget.
+ *
+ * @return FALSE, to indicate that the event has been handled.
+ */
 gboolean on_draw_knob(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
     KnobData *knob_data = (KnobData *)user_data;
 
@@ -27,8 +39,19 @@ gboolean on_draw_knob(GtkWidget *widget, cairo_t *cr, gpointer user_data) {
     return FALSE;
 }
 
-
-// Detect motion and update the knob being dragged
+/**
+ * Callback for the "motion-notify-event" signal. This callback is called when
+ * the user moves the mouse while a knob is being dragged.
+ *
+ * This callback updates the angle of the knob based on the mouse position and
+ * redraws the widget.
+ *
+ * @param widget The GtkWidget associated with the event.
+ * @param event The GdkEventMotion associated with the event.
+ * @param user_data The KnobData associated with the widget.
+ *
+ * @return TRUE to indicate that the event has been handled.
+ */
 gboolean on_motion_notify_knob(GtkWidget *widget, GdkEventMotion *event, gpointer user_data) {
     KnobData *knob_data = (KnobData *)user_data;
 
@@ -42,8 +65,20 @@ gboolean on_motion_notify_knob(GtkWidget *widget, GdkEventMotion *event, gpointe
     return TRUE;
 }
 
-
-// Detect when a knob is clicked
+/**
+ * Callback for the "button-press-event" signal. This callback is called when
+ * the user presses a mouse button while the pointer is over the widget.
+ *
+ * This callback checks if the click is within the radius of the knob and if
+ * so, flags the knob as being dragged. It returns TRUE if the event is
+ * handled, and FALSE otherwise.
+ *
+ * @param widget The GtkWidget associated with the event.
+ * @param event The GdkEventButton associated with the event.
+ * @param user_data The KnobData associated with the widget.
+ *
+ * @return TRUE if the event is handled, FALSE otherwise.
+ */
 gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user_data) {
     KnobData *knob_data = (KnobData *)user_data;
 
@@ -57,16 +92,36 @@ gboolean on_button_press(GtkWidget *widget, GdkEventButton *event, gpointer user
     return FALSE;  // Event not handled
 }
 
-
-// Detect when the knob drag is released
+/**
+ * Callback for the "button-release-event" signal. This callback is called when
+ * the user releases a mouse button while the pointer is over the widget.
+ *
+ * This callback unflags the knob as being dragged, indicating the end of a
+ * drag operation. It returns TRUE to indicate that the event has been handled.
+ *
+ * @param widget The GtkWidget associated with the event.
+ * @param event The GdkEventButton associated with the event.
+ * @param user_data The KnobData associated with the widget.
+ *
+ * @return TRUE to indicate that the event has been handled.
+ */
 gboolean on_button_release(GtkWidget *widget, GdkEventButton *event, gpointer user_data) {
     KnobData *knob_data = (KnobData *)user_data;
     knob_data->is_dragging = FALSE;
     return TRUE;  // Event handled
 }
 
-
-// Create and add a new knob
+/**
+ * Create a new knob at the specified position and return its KnobData.
+ *
+ * The returned KnobData is linked into the list of knobs and is ready to be
+ * used with the other functions in this module.
+ *
+ * @param x The x-coordinate of the knob's center.
+ * @param y The y-coordinate of the knob's center.
+ *
+ * @return The newly-created KnobData.
+ */
 KnobData *add_knob(double x, double y) {
     KnobData *knob = g_new0(KnobData, 1);
     knob->x = x;
@@ -77,8 +132,14 @@ KnobData *add_knob(double x, double y) {
     return knob;
 }
 
-
-// Update an existing knob's position or angle
+/**
+ * Update the properties of a knob given its index in the list of knobs.
+ *
+ * @param knob_index The index of the knob in the list of knobs.
+ * @param x The new x-coordinate of the knob's center.
+ * @param y The new y-coordinate of the knob's center.
+ * @param angle The new angle of the knob in radians.
+ */
 void update_knob(int knob_index, double x, double y, double angle) {
     GList *node = g_list_nth(knobs, knob_index);
     if (node) {
@@ -89,8 +150,18 @@ void update_knob(int knob_index, double x, double y, double angle) {
     }
 }
 
-// Main application
-// Main application
+/**
+ * Activates the GTK application by creating a window with two knob widgets.
+ *
+ * This function sets up the main application window, initializes two
+ * drawing areas for the knob widgets, and connects the necessary event
+ * signals for handling user interactions with the knobs. The window is
+ * displayed with a fixed size of 600x300 pixels.
+ *
+ * @param app The GtkApplication associated with the window.
+ * @param user_data User data passed to the function.
+ */
+
 void activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *window = gtk_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Knob Example");
